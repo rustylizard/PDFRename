@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import json
 import traceback
+import sys
 
 
 # Suppress decompression bomb warnings from PIL
@@ -79,7 +80,7 @@ def extract_text_from_pdf(pdf_path):
         return text.strip()
     except Exception as e:
         print(f"  - Standard extraction failed: {str(e)}")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return ""
 
 def extract_text_with_ocr(pdf_path):
@@ -95,7 +96,7 @@ def extract_text_with_ocr(pdf_path):
         return text.strip()
     except Exception as e:
         print(f"  - OCR failed: {str(e)}")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return ""
 
 
@@ -167,7 +168,7 @@ async def generate_better_filename(content, current_name, client, max_retries=5)
                 print(f"  - Rate limit error: {str(e)}")
         except Exception as e:
             print(f"  - ChatGPT error: {str(e)}")
-            traceback.print_exc()
+            traceback.print_exc(file=sys.stdout)
             break
 
     return None, 0  # Return None and 0 cost on error
@@ -176,7 +177,7 @@ async def generate_better_filename(content, current_name, client, max_retries=5)
 
 def apply_finder_tag(file_path, tag):
     """Apply a Finder tag using the `tag` CLI tool (must be installed via brew)."""
-    result = subprocess.run(["tag", "--add", tag, file_path], capture_output=True, text=True)
+    result = subprocess.run(["/opt/homebrew/bin/tag", "--add", tag, file_path], capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  - Failed to apply tag '{tag}': {result.stderr.strip()}")
     else:
@@ -233,7 +234,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
         except Exception as e:
             error_msg = str(e)
             print(f"  - ERROR: {error_msg}")
-            traceback.print_exc()
+            traceback.print_exc(file=sys.stdout)
 
         # Move file and log results
         try:
@@ -255,7 +256,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
         except Exception as e:
             error_msg = f"File move failed: {str(e)}"
             print(f"  - {error_msg}")
-            traceback.print_exc()
+            traceback.print_exc(file=sys.stdout)
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
 
@@ -277,7 +278,7 @@ async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
         os.remove(test_file)
     except Exception as e:
         print(f"Error: Cannot write to directory {folder_path}: {str(e)}")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         exit(1)
 
     semaphore = asyncio.Semaphore(max_concurrency)
