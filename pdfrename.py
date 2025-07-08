@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from PyPDF2 import PdfReader
 import asyncio
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from pdf2image import convert_from_path
 import pytesseract
 import warnings
@@ -96,65 +96,77 @@ def extract_text_with_ocr(pdf_path):
         return ""
 
 
-async def generate_better_filename(content, current_name, client):
-    """Generate filename using OpenAI API"""
-    #"content": "Create a concise filename (3-5 words) from this document. Use spaces between words, no special chars except hyphen/underscore, no extension. It should not have dashes. It should be nicely capitalized. Include company name if you find."
+async def generate_better_filename(content, current_name, client, max_retries=5):
+    """Generate filename using OpenAI API with simple retry on rate limits."""
 
-    try:
-        tag_list_str = ", ".join(possible_tags)
-        tag_rule_str = " , ".join(tag_rules)
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You're a document assistant. Your job is to:\n"
-                        "1. Suggest a concise filename (3-7 words) from this document. Use spaces between words, no special chars except hyphen, no extension. It should not have too many hyphens. It should be nicely capitalized. Include company name if you find.\n"
-                        f"2. Select the best matching tag from this list: [{tag_list_str}] Do not give a tag that is not in my list provided.\n\n"
-                        f"3. To help you select tags, you must follow the following rules: [{tag_rule_str}].\n"
-                        "Only put the other tag after none of the other tags from the list, fits at all"
-                        "Respond in this JSON format:\n"
-                        "{ \"filename\": \"...\", \"tag\": \"...\" }"
-                    )
-                },
-                {
-                    "role": "user", 
-                    "content": f"Current filename: {current_name}\nDocument content:\n{content[:10000]}"
-                }
-            ],
-            temperature=0.2,
-            max_tokens=30
-        )
-        cost = (response.usage.prompt_tokens * 0.15 / 1_000_000) + (response.usage.completion_tokens * 0.6 / 1_000_000)
+    tag_list_str = ", ".join(possible_tags)
+    tag_rule_str = " , ".join(tag_rules)
+    delay = 1
 
-        #print(f"  - API Usage: {response.usage.prompt_tokens} prompt + " + f"{response.usage.completion_tokens} completion = " + f"{response.usage.total_tokens} tokens")
-        print(f"  - Estimated cost: ${cost:.6f}")
+    for attempt in range(max_retries):
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You're a document assistant. Your job is to:\n"
+                            "1. Suggest a concise filename (3-7 words) from this document. Use spaces between words, no special chars except hyphen, no extension. It should not have too many hyphens. It should be nicely capitalized. Include company name if you find.\n"
+                            f"2. Select the best matching tag from this list: [{tag_list_str}] Do not give a tag that is not in my list provided.\n\n"
+                            f"3. To help you select tags, you must follow the following rules: [{tag_rule_str}].\n"
+                            "Only put the other tag after none of the other tags from the list, fits at all"
+                            "Respond in this JSON format:\n"
+                            "{ \"filename\": \"...\", \"tag\": \"...\" }"
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Current filename: {current_name}\nDocument content:\n{content[:10000]}"
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=30
+            )
+            cost = (
+                response.usage.prompt_tokens * 0.15 / 1_000_000
+            ) + (
+                response.usage.completion_tokens * 0.6 / 1_000_000
+            )
 
-        raw_output = response.choices[0].message.content.strip()
-        print("  - GPT raw output:")
-        print(raw_output)
+            print(f"  - Estimated cost: ${cost:.6f}")
 
-        # Fix: Strip markdown code block if present
-        if raw_output.startswith("```"):
-            raw_output = raw_output.strip("` \n")
-            if raw_output.lower().startswith("json"):
-                raw_output = raw_output[4:].strip()
+            raw_output = response.choices[0].message.content.strip()
+            print("  - GPT raw output:")
+            print(raw_output)
 
-        result = json.loads(raw_output)
-        #result = json.loads(response.choices[0].message.content.strip())
-        raw_name = result.get("filename", "").strip()
-        tag = result.get("tag", "").strip()
-        
-        #raw_name = response.choices[0].message.content.strip()
-        print(raw_name)
-        print(tag)
-        clean_name = raw_name.replace('\n', ' ')  # Only remove newlines
-        return f"{clean_name}.pdf", tag, cost
-    
-    except Exception as e:
-        print(f"  - ChatGPT error: {str(e)}")
-        return None, 0  # Return None and 0 cost on error
+            if raw_output.startswith("```"):
+                raw_output = raw_output.strip("` \n")
+                if raw_output.lower().startswith("json"):
+                    raw_output = raw_output[4:].strip()
+
+            result = json.loads(raw_output)
+            raw_name = result.get("filename", "").strip()
+            tag = result.get("tag", "").strip()
+
+            print(raw_name)
+            print(tag)
+            clean_name = raw_name.replace("\n", " ")
+            return f"{clean_name}.pdf", tag, cost
+
+        except RateLimitError as e:
+            if attempt < max_retries - 1:
+                print(f"  - Rate limit hit, retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                delay *= 2
+                continue
+            else:
+                print(f"  - Rate limit error: {str(e)}")
+        except Exception as e:
+            print(f"  - ChatGPT error: {str(e)}")
+            break
+
+    return None, 0  # Return None and 0 cost on error
 
 
 
@@ -241,7 +253,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
 
-async def process_pdf_folder(folder_path, api_key, max_concurrency=10):
+async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
     """Main processing function"""
     client = AsyncOpenAI(api_key=api_key)
     done_path, error_path = setup_folders(folder_path)
