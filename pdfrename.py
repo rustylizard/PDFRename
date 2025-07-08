@@ -213,8 +213,8 @@ def process_pdf_folder(folder_path, api_key):
     """Main processing function"""
     client = OpenAI(api_key=api_key)
     done_path, error_path = setup_folders(folder_path)
-    log_file = os.path.join(folder_path, "processing_log.txt") 
-    log_file = "./processing_log.txt"
+    log_file = os.path.join(folder_path, "processing_log.log") 
+    log_file = "./processing_log.log"
     
     # Initialize log file
     init_log_file(log_file)

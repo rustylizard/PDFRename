@@ -1,0 +1,6 @@
+pyobjc-framework-Quartz
+pyobjc-framework-Vision
+PyPDF2
+openai
+pdf2image
+pytesseract
