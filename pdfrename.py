@@ -9,9 +9,6 @@ from pdf2image import convert_from_path
 import pytesseract
 import warnings
 import shutil
-from Cocoa import NSURL
-import Quartz
-import Vision
 import subprocess
 import subprocess
 import plistlib
