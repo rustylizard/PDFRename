@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 import os
-import re
-import time
 from datetime import datetime
 from PyPDF2 import PdfReader
-from openai import OpenAI
+import asyncio
+from openai import AsyncOpenAI
 from pdf2image import convert_from_path
 import pytesseract
 import warnings
@@ -97,14 +96,14 @@ def extract_text_with_ocr(pdf_path):
         return ""
 
 
-def generate_better_filename(content, current_name, client):
+async def generate_better_filename(content, current_name, client):
     """Generate filename using OpenAI API"""
     #"content": "Create a concise filename (3-5 words) from this document. Use spaces between words, no special chars except hyphen/underscore, no extension. It should not have dashes. It should be nicely capitalized. Include company name if you find."
 
     try:
         tag_list_str = ", ".join(possible_tags)
         tag_rule_str = " , ".join(tag_rules)
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
@@ -168,16 +167,90 @@ def apply_finder_tag(file_path, tag):
         print(f"  - Tag '{tag}' applied to: {file_path}")
 
 
-def process_pdf_folder(folder_path, api_key):
+async def process_single_pdf(semaphore, folder_path, filename, client, done_path, error_path, log_file):
+    async with semaphore:
+        full_path = os.path.join(folder_path, filename)
+        print(f"\nProcessing: {filename}")
+
+        original_mtime = os.path.getmtime(full_path)
+        success = False
+        error_msg = ""
+        new_name = filename  # Default to original name
+        action = "unchanged"  # Track what happened
+        cost = 0  # Initialize cost
+
+        try:
+            # Text extraction
+            content = await asyncio.to_thread(extract_text_from_pdf, full_path)
+            if not content:
+                print("  - No text found, attempting OCR...")
+                content = await asyncio.to_thread(extract_text_with_ocr, full_path)
+
+            if not content:
+                error_msg = "Could not extract text"
+                raise Exception(error_msg)
+
+            # Generate new filename
+            result = await generate_better_filename(content, filename, client)
+            if result is None or len(result) != 3:
+                raise Exception("Filename/tag generation failed or malformed response.")
+            new_name, selected_tag, cost = result
+
+            if not new_name:
+                error_msg = "Name generation failed"
+                raise Exception(error_msg)
+
+            # Handle renaming
+            if new_name != filename:
+                new_path = os.path.join(folder_path, new_name)
+                os.rename(full_path, new_path)
+                os.utime(new_path, (os.path.getatime(new_path), original_mtime))
+                full_path = new_path  # Update reference after rename
+                print(f"  - Renamed to: {new_name}")
+                action = "renamed"
+            else:
+                print("  - Name unchanged")
+                action = "unchanged"
+
+            success = True
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"  - ERROR: {error_msg}")
+
+        # Move file and log results
+        try:
+            if success:
+                dest_path = os.path.join(done_path, new_name)
+                src_path = os.path.join(folder_path, new_name)
+                await asyncio.to_thread(apply_finder_tag, src_path, selected_tag)
+                shutil.move(src_path, dest_path)
+                log_operation(log_file, filename, "SUCCESS",
+                              f"Content extracted, name {action}, moved to Done/{new_name}",
+                              cost)
+            else:
+                dest_path = os.path.join(error_path, filename)
+                shutil.move(full_path, dest_path)
+                log_operation(log_file, filename, "ERROR",
+                              f"Moved to Error/{filename} - {error_msg}",
+                              cost)
+
+        except Exception as e:
+            error_msg = f"File move failed: {str(e)}"
+            print(f"  - {error_msg}")
+            log_operation(log_file, filename, "ERROR", error_msg, cost)
+
+
+async def process_pdf_folder(folder_path, api_key, max_concurrency=5):
     """Main processing function"""
-    client = OpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=api_key)
     done_path, error_path = setup_folders(folder_path)
-    log_file = os.path.join(folder_path, "processing_log.log") 
+    log_file = os.path.join(folder_path, "processing_log.log")
     log_file = "./processing_log.log"
-    
+
     # Initialize log file
     init_log_file(log_file)
-    
+
     # Check directory permissions
     try:
         test_file = os.path.join(folder_path, "test_write.tmp")
@@ -188,84 +261,15 @@ def process_pdf_folder(folder_path, api_key):
         print(f"Error: Cannot write to directory {folder_path}: {str(e)}")
         exit(1)
 
+    semaphore = asyncio.Semaphore(max_concurrency)
+    tasks = []
     for filename in os.listdir(folder_path):
         if filename.lower().endswith('.pdf'):
-            full_path = os.path.join(folder_path, filename)
-            print(f"\nProcessing: {filename}")
-            
-            original_mtime = os.path.getmtime(full_path)
-            success = False
-            error_msg = ""
-            new_name = filename  # Default to original name
-            action = "unchanged"  # Track what happened
-            cost = 0  # Initialize cost
-            
-            try:
-                # Text extraction
-                content = extract_text_from_pdf(full_path)
-                if not content:
-                    print("  - No text found, attempting OCR...")
-                    content = extract_text_with_ocr(full_path)
-                    #print(f"Content: {content}")
-                
-                if not content:
-                    error_msg = "Could not extract text"
-                    raise Exception(error_msg)
-                    
-                #print(f"  - Extracted {len(content)} characters")
-                
-                # Generate new filename
-                #new_name, cost = generate_better_filename(content, filename, client)
-                #new_name, selected_tag, cost = generate_better_filename(content, filename, client)
-                result = generate_better_filename(content, filename, client)
-                if result is None or len(result) != 3:
-                    raise Exception("Filename/tag generation failed or malformed response.")
-                new_name, selected_tag, cost = result
+            tasks.append(asyncio.create_task(
+                process_single_pdf(semaphore, folder_path, filename, client,
+                                   done_path, error_path, log_file)))
 
-                if not new_name:
-                    error_msg = "Name generation failed"
-                    raise Exception(error_msg)
-                    
-                # Handle renaming
-                if new_name != filename:
-                    new_path = os.path.join(folder_path, new_name)
-                    os.rename(full_path, new_path)
-                    os.utime(new_path, (os.path.getatime(new_path), original_mtime))
-                    full_path = new_path  # Update reference after rename
-                    print(f"  - Renamed to: {new_name}")
-                    action = "renamed"
-                else:
-                    print("  - Name unchanged")
-                    action = "unchanged"
-                
-                success = True
-                
-            except Exception as e:
-                error_msg = str(e)
-                print(f"  - ERROR: {error_msg}")
-            
-            # Move file and log results
-            try:
-                if success:
-                    dest_path = os.path.join(done_path, new_name)
-                    src_path = os.path.join(folder_path, new_name)
-                    apply_finder_tag(src_path, selected_tag)
-
-                    shutil.move(src_path, dest_path)
-                    log_operation(log_file, filename, "SUCCESS", 
-                                f"Content extracted, name {action}, moved to Done/{new_name}", 
-                                cost)
-                else:
-                    dest_path = os.path.join(error_path, filename)
-                    shutil.move(full_path, dest_path)
-                    log_operation(log_file, filename, "ERROR",
-                                f"Moved to Error/{filename} - {error_msg}",
-                                cost)
-                
-            except Exception as e:
-                error_msg = f"File move failed: {str(e)}"
-                print(f"  - {error_msg}")
-                log_operation(log_file, filename, "ERROR", error_msg, cost)
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     # Check dependencies
@@ -282,4 +286,4 @@ if __name__ == "__main__":
         print(f"Error: {folder_path} is not a valid directory")
         exit(1)
     
-    process_pdf_folder(folder_path, api_key)
+    asyncio.run(process_pdf_folder(folder_path, api_key))
