@@ -5,6 +5,8 @@ myenv/
 Done/
 Error/
 Inbox/
+Other/
+
 
 # Ignore Python cache
 __pycache__/
