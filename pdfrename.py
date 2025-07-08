@@ -253,7 +253,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
 
-async def process_pdf_folder(folder_path, api_key, max_concurrency=10):
+async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
     """Main processing function"""
     client = AsyncOpenAI(api_key=api_key)
     done_path, error_path = setup_folders(folder_path)
