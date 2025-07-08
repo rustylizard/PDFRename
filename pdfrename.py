@@ -10,6 +10,7 @@ import warnings
 import shutil
 import subprocess
 import json
+import traceback
 
 
 # Suppress decompression bomb warnings from PIL
@@ -78,6 +79,7 @@ def extract_text_from_pdf(pdf_path):
         return text.strip()
     except Exception as e:
         print(f"  - Standard extraction failed: {str(e)}")
+        traceback.print_exc()
         return ""
 
 def extract_text_with_ocr(pdf_path):
@@ -93,6 +95,7 @@ def extract_text_with_ocr(pdf_path):
         return text.strip()
     except Exception as e:
         print(f"  - OCR failed: {str(e)}")
+        traceback.print_exc()
         return ""
 
 
@@ -164,6 +167,7 @@ async def generate_better_filename(content, current_name, client, max_retries=5)
                 print(f"  - Rate limit error: {str(e)}")
         except Exception as e:
             print(f"  - ChatGPT error: {str(e)}")
+            traceback.print_exc()
             break
 
     return None, 0  # Return None and 0 cost on error
@@ -229,6 +233,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
         except Exception as e:
             error_msg = str(e)
             print(f"  - ERROR: {error_msg}")
+            traceback.print_exc()
 
         # Move file and log results
         try:
@@ -250,6 +255,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
         except Exception as e:
             error_msg = f"File move failed: {str(e)}"
             print(f"  - {error_msg}")
+            traceback.print_exc()
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
 
@@ -271,6 +277,7 @@ async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
         os.remove(test_file)
     except Exception as e:
         print(f"Error: Cannot write to directory {folder_path}: {str(e)}")
+        traceback.print_exc()
         exit(1)
 
     semaphore = asyncio.Semaphore(max_concurrency)
