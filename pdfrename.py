@@ -10,8 +10,6 @@ import pytesseract
 import warnings
 import shutil
 import subprocess
-import subprocess
-import plistlib
 import json
 
 
@@ -98,42 +96,6 @@ def extract_text_with_ocr(pdf_path):
         print(f"  - OCR failed: {str(e)}")
         return ""
 
-def extract_text_with_apple_vision(pdf_path):
-    # Start timing the OCR process
-    start_time = time.time()
-
-    print("  - Using macOS Vision Framework for OCR...")
-    
-    # Convert the provided file path to a URL object
-    url = NSURL.fileURLWithPath_(pdf_path)
-    pdf_doc = Quartz.PDFDocument.alloc().initWithURL_(url)
-    text = []
-
-    # Process each page of the PDF
-    for i in range(pdf_doc.pageCount()):
-        page = pdf_doc.pageAtIndex_(i)
-        
-        # Generate the thumbnail image of the page using the correct method
-        img = page.thumbnailOfSize_forBox_(Quartz.CGSizeMake(1000, 1000), Quartz.kPDFDisplayBoxMediaBox)
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(img.CGImage(), None)
-
-        request = Vision.VNRecognizeTextRequest.alloc().init().autorelease()
-        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-
-        # Perform the OCR request
-        success, err = handler.performRequests_error_([request], None)
-        
-        if success:
-            observations = request.results()
-            page_text = "\n".join([o.topCandidates_(1)[0].string() for o in observations if o.topCandidates_(1)])
-            text.append(f"\n--- PAGE {i+1} ---\n{page_text}")
-    
-    # Calculate the time it took for the OCR process
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-
-    print(f"  - OCR completed in {elapsed_time:.2f} seconds.")
-    return "\n".join(text).strip()
 
 def generate_better_filename(content, current_name, client):
     """Generate filename using OpenAI API"""
@@ -243,8 +205,7 @@ def process_pdf_folder(folder_path, api_key):
                 content = extract_text_from_pdf(full_path)
                 if not content:
                     print("  - No text found, attempting OCR...")
-                    #content = extract_text_with_ocr(full_path)
-                    content = extract_text_with_apple_vision(full_path)
+                    content = extract_text_with_ocr(full_path)
                     #print(f"Content: {content}")
                 
                 if not content:
