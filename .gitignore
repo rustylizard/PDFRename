@@ -1,0 +1,21 @@
+# Ignore virtual environment
+myenv/
+
+# Ignore output folders
+Done/
+Error/
+Inbox/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore system files
+.DS_Store
+
+# Ignore log files
+*.log
+*.txt
+
+# Ignore env files
+.env
