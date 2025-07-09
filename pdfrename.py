@@ -184,7 +184,17 @@ def apply_finder_tag(file_path, tag):
         print(f"  - Tag '{tag}' applied to: {file_path}")
 
 
-async def process_single_pdf(semaphore, folder_path, filename, client, done_path, error_path, log_file):
+async def process_single_pdf(
+    semaphore,
+    folder_path,
+    filename,
+    client,
+    done_path,
+    error_path,
+    log_file,
+    progress,
+):
+    """Process a single PDF and update progress information."""
     async with semaphore:
         full_path = os.path.join(folder_path, filename)
         print(f"\nProcessing: {filename}")
@@ -259,6 +269,12 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             traceback.print_exc(file=sys.stdout)
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
+        async with progress["lock"]:
+            progress["processed"] += 1
+            print(
+                f"PROGRESS {progress['processed']} / {progress['total']}"
+            )
+
 
 async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
     """Main processing function"""
@@ -281,13 +297,26 @@ async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
         traceback.print_exc(file=sys.stdout)
         exit(1)
 
+    pdf_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
+    total_files = len(pdf_files)
+    progress = {"processed": 0, "total": total_files, "lock": asyncio.Lock()}
+    print(f"TOTAL {total_files}")
+
     semaphore = asyncio.Semaphore(max_concurrency)
     tasks = []
-    for filename in os.listdir(folder_path):
-        if filename.lower().endswith('.pdf'):
-            tasks.append(asyncio.create_task(
-                process_single_pdf(semaphore, folder_path, filename, client,
-                                   done_path, error_path, log_file)))
+    for filename in pdf_files:
+        tasks.append(asyncio.create_task(
+            process_single_pdf(
+                semaphore,
+                folder_path,
+                filename,
+                client,
+                done_path,
+                error_path,
+                log_file,
+                progress,
+            )
+        ))
 
     await asyncio.gather(*tasks)
 
