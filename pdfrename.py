@@ -13,8 +13,8 @@ import json
 import traceback
 import sys
 import tkinter as tk
-from tkinter import ttk
 import threading
+import queue
 
 
 # Suppress decompression bomb warnings from PIL
@@ -68,7 +68,7 @@ def log_operation(log_file, filename, status, details="", cost=0):
 
 
 class ProgressUI:
-    """Tkinter progress window with determinate bar"""
+    """Simple Tkinter window showing processed file count"""
 
     def __init__(self, total_files: int):
         self.total_files = total_files
@@ -76,27 +76,36 @@ class ProgressUI:
         self.root = tk.Tk()
         self.root.title("PDF Rename Progress")
         self.root.resizable(False, False)
-        self.label = tk.Label(self.root, text=f"0 / {total_files}", font=("Helvetica", 14))
-        self.label.pack(padx=20, pady=(15, 5))
-        self.progress = ttk.Progressbar(self.root, length=300, mode="determinate", maximum=total_files)
-        self.progress.pack(padx=20, pady=5)
-        self.file_label = tk.Label(self.root, text="", anchor="w")
-        self.file_label.pack(padx=20, pady=(5, 15), fill="x")
+        self.label = tk.Label(
+            self.root,
+            text=f"Processed 0 / {total_files}",
+            font=("Helvetica", 14),
+        )
+        self.label.pack(padx=20, pady=20)
+        self.queue = queue.Queue()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def increment(self, filename: str = ""):
-        """Schedule progress update"""
-        self.root.after(0, self._increment, filename)
+        """Queue an increment from worker thread"""
+        self.queue.put(1)
 
-    def _increment(self, filename: str):
-        self.processed += 1
-        self.label.config(text=f"{self.processed} / {self.total_files}")
-        self.progress['value'] = self.processed
-        if filename:
-            self.file_label.config(text=filename)
-        self.root.update_idletasks()
+    def _process_queue(self):
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+                self.processed += 1
+                self.label.config(
+                    text=f"Processed {self.processed} / {self.total_files}"
+                )
+            except queue.Empty:
+                break
+        if self.processed < self.total_files:
+            self.root.after(100, self._process_queue)
+        else:
+            self.close()
 
     def run(self):
+        self.root.after(100, self._process_queue)
         self.root.mainloop()
 
     def close(self):
@@ -340,13 +349,12 @@ def run_with_progress(folder_path: str, api_key: str):
     try:
         ui = ProgressUI(len(pdf_files))
     except tk.TclError:
-        print("No display available for Tkinter progress bar.")
+        print("No display available for Tkinter progress window.")
         asyncio.run(process_pdf_folder(folder_path, api_key, lambda _="": None))
         return
 
     def runner():
         asyncio.run(process_pdf_folder(folder_path, api_key, ui.increment))
-        ui.root.after(0, ui.close)
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
