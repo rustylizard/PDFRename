@@ -68,33 +68,43 @@ def log_operation(log_file, filename, status, details="", cost=0):
 
 
 class ProgressUI:
-    """Simple Tkinter progress bar"""
+    """Tkinter progress window"""
 
     def __init__(self, total_files: int):
         self.total_files = total_files
         self.processed = 0
         self.root = tk.Tk()
         self.root.title("PDF Rename Progress")
-        self.progress = ttk.Progressbar(self.root, length=300, maximum=total_files)
-        self.progress.pack(padx=10, pady=10)
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress = ttk.Progressbar(
+            self.root, length=300, maximum=total_files, variable=self.progress_var
+        )
+        self.progress.pack(padx=20, pady=(20, 10))
         self.label = tk.Label(self.root, text=f"0 / {total_files}")
-        self.label.pack(padx=10, pady=10)
+        self.label.pack(padx=20)
+        self.file_label = tk.Label(self.root, text="", anchor="w")
+        self.file_label.pack(padx=20, pady=(0, 20), fill="x")
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-    def increment(self):
-        """Increment progress in a thread-safe way"""
-        self.root.after(0, self._increment)
+    def increment(self, filename: str = ""):
+        """Schedule progress update"""
+        self.root.after(0, self._increment, filename)
 
-    def _increment(self):
+    def _increment(self, filename: str):
         self.processed += 1
-        self.progress["value"] = self.processed
+        self.progress_var.set(self.processed)
         self.label.config(text=f"{self.processed} / {self.total_files}")
+        if filename:
+            self.file_label.config(text=filename)
+        self.root.update_idletasks()
 
     def run(self):
         self.root.mainloop()
 
     def close(self):
-        self.root.quit()
-        self.root.destroy()
+        if self.root.winfo_exists():
+            self.root.quit()
+            self.root.destroy()
 
 def extract_text_from_pdf(pdf_path):
     """Extract text using PyPDF2 (for text-based PDFs)"""
@@ -292,7 +302,7 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             traceback.print_exc(file=sys.stdout)
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
-        progress_callback()
+        progress_callback(filename)
 
 
 async def process_pdf_folder(folder_path, api_key, progress_callback, max_concurrency=3):
@@ -333,7 +343,7 @@ def run_with_progress(folder_path: str, api_key: str):
         ui = ProgressUI(len(pdf_files))
     except tk.TclError:
         print("No display available for Tkinter progress bar.")
-        asyncio.run(process_pdf_folder(folder_path, api_key, lambda: None))
+        asyncio.run(process_pdf_folder(folder_path, api_key, lambda _="": None))
         return
 
     def runner():
