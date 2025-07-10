@@ -13,6 +13,7 @@ import json
 import traceback
 import sys
 import tkinter as tk
+from tkinter import ttk
 import threading
 
 
@@ -67,17 +68,20 @@ def log_operation(log_file, filename, status, details="", cost=0):
 
 
 class ProgressUI:
-    """Simple text-based Tkinter progress window"""
+    """Tkinter progress window with determinate bar"""
 
     def __init__(self, total_files: int):
         self.total_files = total_files
         self.processed = 0
         self.root = tk.Tk()
         self.root.title("PDF Rename Progress")
+        self.root.resizable(False, False)
         self.label = tk.Label(self.root, text=f"0 / {total_files}", font=("Helvetica", 14))
-        self.label.pack(padx=20, pady=(20, 10))
+        self.label.pack(padx=20, pady=(15, 5))
+        self.progress = ttk.Progressbar(self.root, length=300, mode="determinate", maximum=total_files)
+        self.progress.pack(padx=20, pady=5)
         self.file_label = tk.Label(self.root, text="", anchor="w")
-        self.file_label.pack(padx=20, pady=(0, 20), fill="x")
+        self.file_label.pack(padx=20, pady=(5, 15), fill="x")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def increment(self, filename: str = ""):
@@ -87,6 +91,7 @@ class ProgressUI:
     def _increment(self, filename: str):
         self.processed += 1
         self.label.config(text=f"{self.processed} / {self.total_files}")
+        self.progress['value'] = self.processed
         if filename:
             self.file_label.config(text=filename)
         self.root.update_idletasks()
