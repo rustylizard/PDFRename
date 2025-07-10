@@ -12,6 +12,9 @@ import subprocess
 import json
 import traceback
 import sys
+import tkinter as tk
+from tkinter import ttk
+import threading
 
 
 # Suppress decompression bomb warnings from PIL
@@ -62,6 +65,36 @@ def log_operation(log_file, filename, status, details="", cost=0):
         f.write("="*40 + "\n\n")
         f.write(log_entry)
         f.write(existing_content)
+
+
+class ProgressUI:
+    """Simple Tkinter progress bar"""
+
+    def __init__(self, total_files: int):
+        self.total_files = total_files
+        self.processed = 0
+        self.root = tk.Tk()
+        self.root.title("PDF Rename Progress")
+        self.progress = ttk.Progressbar(self.root, length=300, maximum=total_files)
+        self.progress.pack(padx=10, pady=10)
+        self.label = tk.Label(self.root, text=f"0 / {total_files}")
+        self.label.pack(padx=10, pady=10)
+
+    def increment(self):
+        """Increment progress in a thread-safe way"""
+        self.root.after(0, self._increment)
+
+    def _increment(self):
+        self.processed += 1
+        self.progress["value"] = self.processed
+        self.label.config(text=f"{self.processed} / {self.total_files}")
+
+    def run(self):
+        self.root.mainloop()
+
+    def close(self):
+        self.root.quit()
+        self.root.destroy()
 
 def extract_text_from_pdf(pdf_path):
     """Extract text using PyPDF2 (for text-based PDFs)"""
@@ -184,7 +217,7 @@ def apply_finder_tag(file_path, tag):
         print(f"  - Tag '{tag}' applied to: {file_path}")
 
 
-async def process_single_pdf(semaphore, folder_path, filename, client, done_path, error_path, log_file):
+async def process_single_pdf(semaphore, folder_path, filename, client, done_path, error_path, log_file, progress_callback):
     async with semaphore:
         full_path = os.path.join(folder_path, filename)
         print(f"\nProcessing: {filename}")
@@ -259,8 +292,10 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             traceback.print_exc(file=sys.stdout)
             log_operation(log_file, filename, "ERROR", error_msg, cost)
 
+        progress_callback()
 
-async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
+
+async def process_pdf_folder(folder_path, api_key, progress_callback, max_concurrency=3):
     """Main processing function"""
     client = AsyncOpenAI(api_key=api_key)
     done_path, error_path = setup_folders(folder_path)
@@ -287,23 +322,35 @@ async def process_pdf_folder(folder_path, api_key, max_concurrency=3):
         if filename.lower().endswith('.pdf'):
             tasks.append(asyncio.create_task(
                 process_single_pdf(semaphore, folder_path, filename, client,
-                                   done_path, error_path, log_file)))
+                                   done_path, error_path, log_file,
+                                   progress_callback)))
 
     await asyncio.gather(*tasks)
 
-if __name__ == "__main__":
-    # Check dependencies
+def run_with_progress(folder_path: str, api_key: str):
+    pdf_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
+    ui = ProgressUI(len(pdf_files))
 
+    def runner():
+        asyncio.run(process_pdf_folder(folder_path, api_key, ui.increment))
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    ui.run()
+    thread.join()
+
+
+if __name__ == "__main__":
     # Get inputs
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("Error: OPENAI_API_KEY environment variable not set.")
         exit(1)
-    #folder_path = input("Enter PDF folder path: ").strip()
+
     folder_path = "./Inbox"
-    
+
     if not os.path.isdir(folder_path):
         print(f"Error: {folder_path} is not a valid directory")
         exit(1)
-    
-    asyncio.run(process_pdf_folder(folder_path, api_key))
+
+    run_with_progress(folder_path, api_key)
