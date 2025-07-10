@@ -2,4 +2,3 @@ PyPDF2
 openai
 pdf2image
 pytesseract
-tkinter
