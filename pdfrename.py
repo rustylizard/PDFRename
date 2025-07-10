@@ -329,10 +329,16 @@ async def process_pdf_folder(folder_path, api_key, progress_callback, max_concur
 
 def run_with_progress(folder_path: str, api_key: str):
     pdf_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
-    ui = ProgressUI(len(pdf_files))
+    try:
+        ui = ProgressUI(len(pdf_files))
+    except tk.TclError:
+        print("No display available for Tkinter progress bar.")
+        asyncio.run(process_pdf_folder(folder_path, api_key, lambda: None))
+        return
 
     def runner():
         asyncio.run(process_pdf_folder(folder_path, api_key, ui.increment))
+        ui.root.after(0, ui.close)
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
