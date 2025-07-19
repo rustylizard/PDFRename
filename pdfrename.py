@@ -63,6 +63,16 @@ def log_operation(log_file, filename, status, details="", cost=0):
         f.write(log_entry)
         f.write(existing_content)
 
+def ensure_unique_name(folder_path, filename):
+    """Return a non-colliding filename within the folder."""
+    base, ext = os.path.splitext(filename)
+    counter = 1
+    new_name = filename
+    while os.path.exists(os.path.join(folder_path, new_name)):
+        new_name = f"{base}_{counter}{ext}"
+        counter += 1
+    return new_name
+
 def extract_text_from_pdf(pdf_path):
     """Extract text using PyPDF2 (for text-based PDFs)"""
     text = ""
@@ -217,8 +227,9 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
                 error_msg = "Name generation failed"
                 raise Exception(error_msg)
 
-            # Handle renaming
+            # Handle renaming and avoid clobbering existing files
             if new_name != filename:
+                new_name = ensure_unique_name(folder_path, new_name)
                 new_path = os.path.join(folder_path, new_name)
                 os.rename(full_path, new_path)
                 os.utime(new_path, (os.path.getatime(new_path), original_mtime))
@@ -239,18 +250,20 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
         # Move file and log results
         try:
             if success:
-                dest_path = os.path.join(done_path, new_name)
+                dest_name = ensure_unique_name(done_path, new_name)
+                dest_path = os.path.join(done_path, dest_name)
                 src_path = os.path.join(folder_path, new_name)
                 await asyncio.to_thread(apply_finder_tag, src_path, selected_tag)
                 shutil.move(src_path, dest_path)
                 log_operation(log_file, filename, "SUCCESS",
-                              f"Content extracted, name {action}, moved to Done/{new_name}",
+                              f"Content extracted, name {action}, moved to Done/{dest_name}",
                               cost)
             else:
-                dest_path = os.path.join(error_path, filename)
+                error_name = ensure_unique_name(error_path, filename)
+                dest_path = os.path.join(error_path, error_name)
                 shutil.move(full_path, dest_path)
                 log_operation(log_file, filename, "ERROR",
-                              f"Moved to Error/{filename} - {error_msg}",
+                              f"Moved to Error/{error_name} - {error_msg}",
                               cost)
 
         except Exception as e:
