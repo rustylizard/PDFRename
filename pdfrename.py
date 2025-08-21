@@ -221,12 +221,24 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
             potential_dest_path = os.path.join(done_path, new_name)
             if os.path.exists(potential_dest_path):
                 print(f"  - Filename '{new_name}' already exists in Done folder.")
-                # Append timestamp to make it unique
+                # Append date and a counter to make it unique, e.g., "file_21Aug25_1.pdf"
                 name, ext = os.path.splitext(new_name)
-                creation_time = original_mtime # Use original modification time
-                creation_date = datetime.fromtimestamp(creation_time).strftime("%Y%m%d_%H%M%S")
-                new_name = f"{name}_{creation_date}{ext}"
-                print(f"  - Appending timestamp. New name: {new_name}")
+                date_suffix = datetime.fromtimestamp(original_mtime).strftime("%d%b%y")
+
+                # First, try with just the date suffix
+                potential_new_name = f"{name}_{date_suffix}{ext}"
+                if not os.path.exists(os.path.join(done_path, potential_new_name)):
+                    new_name = potential_new_name
+                else:
+                    # If that also exists, start a counter
+                    counter = 1
+                    while True:
+                        potential_new_name = f"{name}_{date_suffix}_{counter}{ext}"
+                        if not os.path.exists(os.path.join(done_path, potential_new_name)):
+                            new_name = potential_new_name
+                            break
+                        counter += 1
+                print(f"  - Appending date/counter. New name: {new_name}")
 
             # Handle renaming in the source folder
             if new_name != filename:
