@@ -217,7 +217,18 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
                 error_msg = "Name generation failed"
                 raise Exception(error_msg)
 
-            # Handle renaming
+            # Check for potential filename conflicts in the destination 'Done' folder
+            potential_dest_path = os.path.join(done_path, new_name)
+            if os.path.exists(potential_dest_path):
+                print(f"  - Filename '{new_name}' already exists in Done folder.")
+                # Append timestamp to make it unique
+                name, ext = os.path.splitext(new_name)
+                creation_time = original_mtime # Use original modification time
+                creation_date = datetime.fromtimestamp(creation_time).strftime("%Y%m%d_%H%M%S")
+                new_name = f"{name}_{creation_date}{ext}"
+                print(f"  - Appending timestamp. New name: {new_name}")
+
+            # Handle renaming in the source folder
             if new_name != filename:
                 new_path = os.path.join(folder_path, new_name)
                 os.rename(full_path, new_path)
@@ -227,20 +238,6 @@ async def process_single_pdf(semaphore, folder_path, filename, client, done_path
                 action = "renamed"
             else:
                 print("  - Name unchanged")
-
-            if os.path.exists(new_path):
-                creation_time = os.path.getctime(full_path)
-                creation_date = datetime.fromtimestamp(creation_time).strftime("%Y%m%d_%H%M%S")
-                name, ext = os.path.splitext(new_name)
-                
-                new_name = f"{name}_{creation_date}{ext}"
-                new_path = os.path.join(folder_path, new_name)
-                os.rename(full_path,new_path)
-                os.utime(new_path, (os.path.getatime(new_path), original_mtime))
-                full_path = new_path  # Update reference after rename
-                print(f"  - Filename already exists, renaming to: {new_name}")
-                action = "renamed"
-            else:
                 action = "unchanged"
 
             success = True
